@@ -1,8 +1,9 @@
-import { Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common';
+import { HttpStatus, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { PrismaClient } from '../../generated/prisma';
-import { PaginationDto } from '../common/dto/pagination';
+import { RpcException } from '@nestjs/microservices';
+import { PaginationDto } from '../common';
 
 @Injectable()
 export class ProductsService extends PrismaClient implements OnModuleInit{
@@ -13,6 +14,30 @@ export class ProductsService extends PrismaClient implements OnModuleInit{
     this.$connect()
     this.logger.log("Connected to database")
   }
+
+  async validateProducts(ids:number[]){
+    
+    ids= Array.from(new Set(ids)) 
+    const products=await this.product.findMany({
+      where:{
+        id:{
+          in:ids
+        }
+      }
+    })
+
+    if(products.length !== ids.length){
+      throw new RpcException({
+        message:"Some products were not found",
+        status:HttpStatus.BAD_REQUEST
+      })
+    }
+
+    return products
+  }
+
+
+
   create(createProductDto: CreateProductDto) {
 
   return this.product.create({
@@ -21,36 +46,40 @@ export class ProductsService extends PrismaClient implements OnModuleInit{
     
   }
 
-  async findAll(paginationDto:PaginationDto) {
-    const {page=1,limit=10}=paginationDto
+async findAll(paginationDto: PaginationDto) {
+  const { page = 1, limit = 10 } = paginationDto;
 
-    const totalPages=await this.product.count({
-      where:{
-        available:true
-      }
-    })
-    const products=await this.product.findMany({
-      where:{
-        available:true
-      },
-      skip:(page-1)*limit,
-      take:limit,
-        orderBy:{
-        price:"asc"
-      },
-    })
-    return {
-      data:products,
-      meta:{
-      totalPages,
-      currentPage:page,
-      lastPage:Math.ceil(totalPages/limit),
-      nextPage:page<totalPages?page+1:null,
-      prevPage: page>1?page-1:null
-    }
-    };
-  }
- 
+  const totalItems = await this.product.count({
+    where: {
+      available: true,
+    },
+  });
+
+  const products = await this.product.findMany({
+    where: {
+      available: true,
+    },
+    skip: (page - 1) * limit,
+    take: limit,
+    orderBy: {
+      price: 'asc',
+    },
+  });
+
+  const lastPage = Math.ceil(totalItems / limit);
+
+  return {
+    data: products,
+    meta: {
+      totalItems,
+      currentPage: page,
+      lastPage,
+      nextPage: page < lastPage ? page + 1 : null,
+      prevPage: page > 1 ? page - 1 : null,
+    },
+  };
+}
+
 
   async findOne(id: number) {
     const product = await this.product.findFirst({
@@ -59,7 +88,9 @@ export class ProductsService extends PrismaClient implements OnModuleInit{
       }
     });
     if (!product) {
-      throw new NotFoundException("Producto no encontrado");
+      throw new RpcException({
+        status:HttpStatus.BAD_REQUEST,
+        message:"Producto no encontrado"});
     }
     return product;
   }
